@@ -55,19 +55,67 @@ window.__ModuleLoader__.load({
           viewBox: '0 0 24 24',
           width: size,
           height: size,
-          fill: 'none',
-          stroke: 'currentColor',
-          strokeWidth: 2,
-          strokeLinecap: 'round',
-          strokeLinejoin: 'round',
+          fill: 'currentColor',
           'aria-hidden': 'true',
           style: { flexShrink: 0, display: 'inline-block' },
         },
-        h('path', { d: 'M3 11h18' }),
-        h('path', { d: 'M5 11l2-6.5a2 2 0 0 1 2.4-1.3L12 4l2.6-.8A2 2 0 0 1 17 4.5L19 11' }),
-        h('circle', { cx: '8.5', cy: '16.5', r: '3' }),
-        h('circle', { cx: '15.5', cy: '16.5', r: '3' }),
-        h('path', { d: 'M11.5 16.5h1' }),
+        // Sunglasses: frame bar, two filled lenses, and a bridge
+        h('path', {
+          d: 'M1.5 9.25h21',
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.6,
+          strokeLinecap: 'round',
+        }),
+        h('path', { d: 'M2.25 9.25h8.25v2.5a3.75 3.75 0 0 1-3.75 3.75h-.75a3.75 3.75 0 0 1-3.75-3.75z' }),
+        h('path', { d: 'M13.5 9.25h8.25v2.5a3.75 3.75 0 0 1-3.75 3.75h-.75a3.75 3.75 0 0 1-3.75-3.75z' }),
+        h('path', {
+          d: 'M10.5 10.6q1.5-1 3 0',
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.6,
+          strokeLinecap: 'round',
+        }),
+      )
+    }
+
+    const SWITCH_ON_COLOR = '#3b82f6'
+    const SWITCH_OFF_TRACK = '#e2e8f0'
+
+    /**
+     * Compact iOS-style switch: gray-white when off, blue when on.
+     * @param {{ checked: boolean, disabled?: boolean }} props
+     */
+    function SwitchTrack({ checked }) {
+      return h(
+        'span',
+        {
+          'aria-hidden': 'true',
+          style: {
+            position: 'relative',
+            display: 'inline-block',
+            flexShrink: 0,
+            width: '28px',
+            height: '16px',
+            borderRadius: '999px',
+            background: checked ? SWITCH_ON_COLOR : SWITCH_OFF_TRACK,
+            boxShadow: checked ? 'none' : 'inset 0 0 0 1px rgba(15, 23, 42, 0.06)',
+            transition: 'background-color 0.2s ease',
+          },
+        },
+        h('span', {
+          style: {
+            position: 'absolute',
+            top: '2px',
+            left: checked ? '14px' : '2px',
+            width: '12px',
+            height: '12px',
+            borderRadius: '50%',
+            background: '#ffffff',
+            boxShadow: '0 1px 2px rgba(15, 23, 42, 0.25)',
+            transition: 'left 0.2s ease',
+          },
+        }),
       )
     }
 
@@ -567,101 +615,56 @@ window.__ModuleLoader__.load({
 
           if (!sessionId || destroyed) return null
 
-          // Case A: Mid-conversation in a standard session -> disabled button explaining pre-chat rule
-          if (locked && !enabled) {
-            return h(
-              'button',
-              {
-                type: 'button',
-                disabled: true,
-                'aria-disabled': 'true',
-                'data-testid': 'incognito-toggle-disabled',
-                title: tr('lockedDisabledTip'),
-                style: {
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  height: '28px',
-                  padding: '0 10px',
-                  borderRadius: '999px',
-                  border: '1px solid var(--dsw-alias-border-def, rgba(148, 163, 184, 0.22))',
-                  background: 'transparent',
-                  color: 'var(--dsw-alias-label-ter, #64748b)',
-                  fontSize: '12px',
-                  lineHeight: 1,
-                  cursor: 'not-allowed',
-                  opacity: 0.55,
-                  userSelect: 'none',
-                },
-              },
-              h(IncognitoIcon, { size: 13 }),
-              h('span', null, tr('toggleOff')),
-            )
-          }
+          // Single switch rendering for all states:
+          // - blank session: interactive (off = gray-white, on = blue)
+          // - conversation started: locked in its current state (non-interactive)
+          const interactive = !locked && !busy
+          const title = locked
+            ? (enabled ? tr('bannerDescLocked') : tr('lockedDisabledTip'))
+            : (enabled ? tr('preStartTipOn') : tr('preStartTipOff'))
+          const accent = enabled ? SWITCH_ON_COLOR : 'var(--dsw-alias-label-sec, #64748b)'
 
-          // Case B: Mid-conversation in an active Incognito session -> locked badge
-          if (locked && enabled) {
-            return h(
-              'span',
-              {
-                'data-testid': 'incognito-locked-badge',
-                title: tr('bannerDescLocked'),
-                style: {
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  height: '28px',
-                  padding: '0 10px',
-                  borderRadius: '999px',
-                  border: '1px solid var(--dsw-alias-accent-primary, #38bdf8)',
-                  background: 'var(--dsw-alias-bg-layer-2, rgba(56, 189, 248, 0.14))',
-                  color: 'var(--dsw-alias-label-pri, #e2e8f0)',
-                  fontSize: '12px',
-                  fontWeight: 600,
-                  lineHeight: 1,
-                  userSelect: 'none',
-                },
-              },
-              h(IncognitoIcon, { size: 13 }),
-              h('span', null, tr('lockedActive')),
-            )
-          }
-
-          // Case C: Pre-conversation (blank session) -> interactive toggle button
           return h(
             'button',
             {
               type: 'button',
+              role: 'switch',
+              'aria-checked': enabled ? 'true' : 'false',
+              'aria-disabled': locked ? 'true' : undefined,
+              disabled: locked || busy,
               onClick: handleToggle,
-              disabled: busy,
-              'aria-pressed': enabled ? 'true' : 'false',
-              'data-testid': 'incognito-toggle-button',
-              title: enabled ? tr('preStartTipOn') : tr('preStartTipOff'),
+              'data-testid': locked
+                ? (enabled ? 'incognito-locked-badge' : 'incognito-toggle-disabled')
+                : 'incognito-toggle-button',
+              title,
               style: {
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: '6px',
                 height: '28px',
-                padding: '0 10px',
-                borderRadius: '999px',
-                border: enabled
-                  ? '1px solid var(--dsw-alias-accent-primary, #38bdf8)'
-                  : '1px solid var(--dsw-alias-border-def, rgba(148, 163, 184, 0.3))',
-                background: enabled
-                  ? 'var(--dsw-alias-bg-layer-2, rgba(56, 189, 248, 0.16))'
-                  : 'var(--dsw-alias-bg-layer-1, transparent)',
-                color: enabled
-                  ? 'var(--dsw-alias-label-pri, #38bdf8)'
-                  : 'var(--dsw-alias-label-sec, #94a3b8)',
-                fontSize: '12px',
-                fontWeight: enabled ? 600 : 500,
+                padding: '0 6px',
+                border: 'none',
+                borderRadius: '8px',
+                background: 'transparent',
+                color: accent,
+                fontSize: '13px',
+                fontWeight: 500,
                 lineHeight: 1,
-                cursor: busy ? 'wait' : 'pointer',
-                transition: 'all 0.15s ease',
+                cursor: locked ? 'not-allowed' : busy ? 'wait' : 'pointer',
+                opacity: locked && !enabled ? 0.5 : 1,
+                userSelect: 'none',
+                transition: 'color 0.2s ease',
+              },
+              onMouseEnter: (e) => {
+                if (interactive) e.currentTarget.style.background = 'var(--dsw-alias-bg-hover, rgba(15, 23, 42, 0.05))'
+              },
+              onMouseLeave: (e) => {
+                e.currentTarget.style.background = 'transparent'
               },
             },
-            h(IncognitoIcon, { size: 13 }),
-            h('span', null, enabled ? tr('toggleOn') : tr('toggleOff')),
+            h(IncognitoIcon, { size: 16 }),
+            h('span', null, tr('toggleOff')),
+            h(SwitchTrack, { checked: enabled }),
           )
         }
 

@@ -2056,6 +2056,94 @@ export function apply(ctx) {
   // ============================================================================
   // 11. Register `/api/incognito` HTTP route for the Web Client UI
   // ============================================================================
+  async function handleIncognitoHttpRequest(methodRaw, urlStr, readBodyText) {
+    const url = new URL(urlStr, 'http://localhost')
+    const method = String(methodRaw || 'GET').toUpperCase()
+    try {
+      if (method === 'GET') {
+        const sessionId = url.searchParams.get('sessionId') ?? undefined
+        return { status: 200, body: { ok: true, ...getStatus(sessionId) } }
+      }
+
+      let body = {}
+      try {
+        const text = await readBodyText()
+        if (typeof text === 'string' && text.trim().length > 0) body = JSON.parse(text)
+      } catch {
+        // Empty or non-JSON body; fall back to query params.
+      }
+
+      const sessionId = body.sessionId ?? url.searchParams.get('sessionId') ?? undefined
+      const action = body.action ?? url.searchParams.get('action') ?? (method === 'DELETE' ? 'destroy' : 'toggle')
+
+      if (action === 'stage') {
+        return { status: 200, body: { ok: true, ...setStagedForNextSession(Boolean(body.staged ?? true)) } }
+      }
+
+      if (action === 'destroy' || action === 'cancel' || action === 'end' || method === 'DELETE') {
+        if (!sessionId) {
+          const ids = [...incognitoSessions.keys()]
+          for (const id of ids) {
+            await destroyIncognitoSession(id, body.reason ?? 'http-destroy-all')
+          }
+          return { status: 200, body: { ok: true, destroyedIds: ids } }
+        }
+        const res = await destroyIncognitoSession(sessionId, body.reason ?? 'http-destroy')
+        return { status: 200, body: { ok: true, ...res, ...getStatus(sessionId) } }
+      }
+
+      if (!sessionId) {
+        return {
+          status: 400,
+          body: { ok: false, code: 'incognito/invalid-session', message: 'sessionId is required' },
+        }
+      }
+
+      if (action === 'enable' || action === 'on') {
+        const status = await enableIncognito(sessionId)
+        return { status: 200, body: { ok: true, ...status } }
+      }
+
+      if (action === 'disable' || action === 'off') {
+        const status = await disableIncognito(sessionId)
+        return { status: 200, body: { ok: true, ...status } }
+      }
+
+      const status = await toggleIncognito(sessionId)
+      return { status: 200, body: { ok: true, ...status } }
+    } catch (error) {
+      const code = error?.code ?? 'incognito/error'
+      const message = error instanceof Error ? error.message : String(error)
+      return { status: 409, body: { ok: false, code, message } }
+    }
+  }
+
+  function registerWebServerRoute(webServer) {
+    if (!webServer || typeof webServer.register !== 'function' || wrappedObjects.has(webServer)) return
+    wrappedObjects.add(webServer)
+
+    ctx.effect(() => webServer.register({
+      kind: 'exact',
+      path: '/api/incognito',
+      async handler(req, res) {
+        const result = await handleIncognitoHttpRequest(req.method, req.url ?? '/api/incognito', async () => {
+          const chunks = []
+          for await (const chunk of req) {
+            chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk)
+          }
+          return Buffer.concat(chunks).toString('utf8')
+        })
+        res.statusCode = result.status
+        res.setHeader('content-type', 'application/json; charset=utf-8')
+        res.setHeader('cache-control', 'no-store')
+        res.end(JSON.stringify(result.body))
+      },
+    }), 'dsh-incognito.webserver-route')
+  }
+
+  registerWebServerRoute(ctx.get('webServer'))
+  ctx.inject(['webServer'], (c) => registerWebServerRoute(c.webServer))
+
   function registerHttpRoute(connectionSvc) {
     if (!connectionSvc?.fetch?.register || wrappedObjects.has(connectionSvc)) return
     wrappedObjects.add(connectionSvc)
@@ -2063,85 +2151,18 @@ export function apply(ctx) {
     ctx.effect(() => connectionSvc.fetch.register({
       path: '/api/incognito',
       async handler(request) {
-        const url = new URL(request.url, 'http://localhost')
-        const method = request.method.toUpperCase()
-        const headers = {
-          'content-type': 'application/json; charset=utf-8',
-          'cache-control': 'no-store',
-        }
-
-        try {
-          if (method === 'GET') {
-            const sessionId = url.searchParams.get('sessionId') ?? undefined
-            return new Response(JSON.stringify({ ok: true, ...getStatus(sessionId) }), {
-              status: 200,
-              headers,
-            })
-          }
-
-          let body = {}
-          try {
-            const text = await request.text()
-            if (text.trim().length > 0) body = JSON.parse(text)
-          } catch {
-            // Empty or non-JSON body; fall back to query params.
-          }
-
-          const sessionId = body.sessionId ?? url.searchParams.get('sessionId') ?? undefined
-          const action = body.action ?? url.searchParams.get('action') ?? (method === 'DELETE' ? 'destroy' : 'toggle')
-
-          if (action === 'stage') {
-            return new Response(
-              JSON.stringify({ ok: true, ...setStagedForNextSession(Boolean(body.staged ?? true)) }),
-              { status: 200, headers },
-            )
-          }
-
-          if (action === 'destroy' || action === 'cancel' || action === 'end' || method === 'DELETE') {
-            if (!sessionId) {
-              const ids = [...incognitoSessions.keys()]
-              for (const id of ids) {
-                await destroyIncognitoSession(id, body.reason ?? 'http-destroy-all')
-              }
-              return new Response(JSON.stringify({ ok: true, destroyedIds: ids }), {
-                status: 200,
-                headers,
-              })
-            }
-            const res = await destroyIncognitoSession(sessionId, body.reason ?? 'http-destroy')
-            return new Response(JSON.stringify({ ok: true, ...res, ...getStatus(sessionId) }), {
-              status: 200,
-              headers,
-            })
-          }
-
-          if (!sessionId) {
-            return new Response(
-              JSON.stringify({ ok: false, code: 'incognito/invalid-session', message: 'sessionId is required' }),
-              { status: 400, headers },
-            )
-          }
-
-          if (action === 'enable' || action === 'on') {
-            const status = await enableIncognito(sessionId)
-            return new Response(JSON.stringify({ ok: true, ...status }), { status: 200, headers })
-          }
-
-          if (action === 'disable' || action === 'off') {
-            const status = await disableIncognito(sessionId)
-            return new Response(JSON.stringify({ ok: true, ...status }), { status: 200, headers })
-          }
-
-          const status = await toggleIncognito(sessionId)
-          return new Response(JSON.stringify({ ok: true, ...status }), { status: 200, headers })
-        } catch (error) {
-          const code = error?.code ?? 'incognito/error'
-          const message = error instanceof Error ? error.message : String(error)
-          return new Response(
-            JSON.stringify({ ok: false, code, message }),
-            { status: 409, headers },
-          )
-        }
+        const result = await handleIncognitoHttpRequest(
+          request.method,
+          request.url,
+          () => request.text(),
+        )
+        return new Response(JSON.stringify(result.body), {
+          status: result.status,
+          headers: {
+            'content-type': 'application/json; charset=utf-8',
+            'cache-control': 'no-store',
+          },
+        })
       },
     }), 'dsh-incognito.http-route')
   }

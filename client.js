@@ -72,27 +72,37 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      inject: {
-        required: ['slots'],
-        optional: ['locale', 'commandUi', 'sessions', 'workspaces', 'uiWorkspace', 'uiSession'],
-      },
+      inject: ['slots'],
       apply(ctx) {
-        // Register bilingual strings if locale service is present
-        if (ctx.locale && typeof ctx.locale.register === 'function') {
+        const getService = (name) => {
           try {
-            ctx.locale.register('zh', { incognito: DICT_ZH })
-            ctx.locale.register('zh-CN', { incognito: DICT_ZH })
-            ctx.locale.register('en', { incognito: DICT_EN })
-            ctx.locale.register('en-US', { incognito: DICT_EN })
+            return ctx.get(name)
           } catch {
-            // Ignore duplicate registration.
+            return undefined
           }
         }
 
-        function tr(key) {
-          if (ctx.locale && typeof ctx.locale.t === 'function') {
+        // Register bilingual strings if locale service is present
+        const registerLocale = (localeSvc) => {
+          if (localeSvc && typeof localeSvc.register === 'function') {
             try {
-              const val = ctx.locale.t(`incognito.${key}`)
+              localeSvc.register('zh', { incognito: DICT_ZH })
+              localeSvc.register('zh-CN', { incognito: DICT_ZH })
+              localeSvc.register('en', { incognito: DICT_EN })
+              localeSvc.register('en-US', { incognito: DICT_EN })
+            } catch {
+              // Ignore duplicate registration.
+            }
+          }
+        }
+        registerLocale(getService('locale'))
+        ctx.inject?.(['locale'], (c) => registerLocale(c.locale))
+
+        function tr(key) {
+          const localeSvc = getService('locale')
+          if (localeSvc && typeof localeSvc.t === 'function') {
+            try {
+              const val = localeSvc.t(`incognito.${key}`)
               if (typeof val === 'string' && val !== `incognito.${key}`) return val
             } catch {
               // Fall back to local dictionary.
@@ -201,7 +211,7 @@ window.__ModuleLoader__.load({
          */
         function detectOwningWorkspaceId(sessionId) {
           try {
-            const snap = ctx.workspaces?.list?.getSnapshot?.()
+            const snap = getService('workspaces')?.list?.getSnapshot?.()
             const found = snap?.items?.find(w => Array.isArray(w.sessionIds) && w.sessionIds.includes(sessionId))
             return found?.workspaceId
           } catch {
@@ -268,14 +278,16 @@ window.__ModuleLoader__.load({
 
           // Open a fresh blank session so the destroyed session is immediately replaced in the viewport
           try {
-            if (wsId && typeof ctx.uiWorkspace?.createWorkspaceSession === 'function') {
-              await ctx.uiWorkspace.createWorkspaceSession(wsId)
+            const uiWorkspace = getService('uiWorkspace')
+            const sessionsSvc = getService('sessions')
+            if (wsId && typeof uiWorkspace?.createWorkspaceSession === 'function') {
+              await uiWorkspace.createWorkspaceSession(wsId)
               return
             }
-            if (typeof ctx.sessions?.create === 'function') {
-              const created = await ctx.sessions.create(wsId ? { workspaceId: wsId } : {})
-              if (created?.sessionId && typeof ctx.uiWorkspace?.openSession === 'function') {
-                ctx.uiWorkspace.openSession(created.sessionId)
+            if (typeof sessionsSvc?.create === 'function') {
+              const created = await sessionsSvc.create(wsId ? { workspaceId: wsId } : {})
+              if (created?.sessionId && typeof uiWorkspace?.openSession === 'function') {
+                uiWorkspace.openSession(created.sessionId)
               }
             }
           } catch {
@@ -286,136 +298,148 @@ window.__ModuleLoader__.load({
         // ============================================================================
         // Wrap Client `ctx.sessions` & `ctx.workspaces` for sidebar hiding & cancel hook
         // ============================================================================
-        if (ctx.sessions?.list && typeof ctx.sessions.list.getSnapshot === 'function') {
-          const origGetSnapshot = ctx.sessions.list.getSnapshot.bind(ctx.sessions.list)
-          const origSubscribe = ctx.sessions.list.subscribe?.bind(ctx.sessions.list)
-          let lastRawSnap = undefined
-          let lastFilteredSnap = undefined
+        const wrappedClientServices = new WeakSet()
 
-          ctx.sessions.list.getSnapshot = function incognitoFilteredListSnapshot() {
-            const raw = origGetSnapshot()
-            if (!raw || typeof raw !== 'object' || !raw.byId) return raw
-            let needsFilter = false
-            for (const id of Object.keys(raw.byId)) {
-              const st = statusBySession.get(id)
-              if (st?.enabled) {
-                needsFilter = true
-                break
+        function wrapClientSessions(sessionsSvc) {
+          if (!sessionsSvc || wrappedClientServices.has(sessionsSvc)) return
+          wrappedClientServices.add(sessionsSvc)
+
+          if (sessionsSvc.list && typeof sessionsSvc.list.getSnapshot === 'function') {
+            const origGetSnapshot = sessionsSvc.list.getSnapshot.bind(sessionsSvc.list)
+            const origSubscribe = sessionsSvc.list.subscribe?.bind(sessionsSvc.list)
+            let lastRawSnap = undefined
+            let lastFilteredSnap = undefined
+
+            sessionsSvc.list.getSnapshot = function incognitoFilteredListSnapshot() {
+              const raw = origGetSnapshot()
+              if (!raw || typeof raw !== 'object' || !raw.byId) return raw
+              let needsFilter = false
+              for (const id of Object.keys(raw.byId)) {
+                const st = statusBySession.get(id)
+                if (st?.enabled) {
+                  needsFilter = true
+                  break
+                }
               }
-            }
-            if (!needsFilter) {
+              if (!needsFilter) {
+                lastRawSnap = raw
+                lastFilteredSnap = raw
+                return raw
+              }
+              if (raw === lastRawSnap && lastFilteredSnap) {
+                return lastFilteredSnap
+              }
+              const nextById = {}
+              for (const [id, summary] of Object.entries(raw.byId)) {
+                const st = statusBySession.get(id)
+                if (st?.enabled) continue
+                nextById[id] = summary
+              }
               lastRawSnap = raw
-              lastFilteredSnap = raw
-              return raw
-            }
-            if (raw === lastRawSnap && lastFilteredSnap) {
+              lastFilteredSnap = {
+                ...raw,
+                byId: nextById,
+                ...(Array.isArray(raw.ids)
+                  ? { ids: raw.ids.filter(id => Object.prototype.hasOwnProperty.call(nextById, id)) }
+                  : {}),
+              }
               return lastFilteredSnap
             }
-            const nextById = {}
-            for (const [id, summary] of Object.entries(raw.byId)) {
-              const st = statusBySession.get(id)
-              if (st?.enabled) continue
-              nextById[id] = summary
+
+            if (typeof origSubscribe === 'function') {
+              sessionsSvc.list.subscribe = function incognitoFilteredListSubscribe(listener) {
+                const unsubRaw = origSubscribe(listener)
+                const unsubIncognito = () => {
+                  lastRawSnap = undefined
+                  lastFilteredSnap = undefined
+                  listener()
+                }
+                subscribers.add(unsubIncognito)
+                return () => {
+                  unsubRaw()
+                  subscribers.delete(unsubIncognito)
+                }
+              }
             }
-            lastRawSnap = raw
-            lastFilteredSnap = {
-              ...raw,
-              byId: nextById,
-              ...(Array.isArray(raw.ids)
-                ? { ids: raw.ids.filter(id => Object.prototype.hasOwnProperty.call(nextById, id)) }
-                : {}),
-            }
-            return lastFilteredSnap
           }
 
-          if (typeof origSubscribe === 'function') {
-            ctx.sessions.list.subscribe = function incognitoFilteredListSubscribe(listener) {
-              const unsubRaw = origSubscribe(listener)
-              const unsubIncognito = () => {
-                lastRawSnap = undefined
-                lastFilteredSnap = undefined
-                listener()
+          if (typeof sessionsSvc.prompt === 'function') {
+            const origPrompt = sessionsSvc.prompt.bind(sessionsSvc)
+            sessionsSvc.prompt = async function incognitoGuardedClientPrompt(sessionId, ...rest) {
+              const st = statusBySession.get(sessionId)
+              if (st) {
+                statusBySession.set(sessionId, { ...st, locked: true })
+                notifyClientSubscribers()
               }
-              subscribers.add(unsubIncognito)
-              return () => {
-                unsubRaw()
-                subscribers.delete(unsubIncognito)
+              return origPrompt(sessionId, ...rest)
+            }
+          }
+
+          if (typeof sessionsSvc.cancel === 'function') {
+            const origCancel = sessionsSvc.cancel.bind(sessionsSvc)
+            sessionsSvc.cancel = async function incognitoGuardedClientCancel(sessionId, ...rest) {
+              const st = statusBySession.get(sessionId)
+              if (st?.enabled) {
+                try {
+                  await origCancel(sessionId, ...rest)
+                } catch {
+                  // Ignore if already destroyed by Host cancel interceptor.
+                }
+                await destroyAndLeaveIncognitoSession(sessionId, 'client-cancel')
+                return
               }
+              return origCancel(sessionId, ...rest)
             }
           }
         }
 
-        // Preserve `workspaceId` membership in browser memory ONLY while the incognito session
-        // is still blank (`!locked`) so `ConversationContent.tsx` keeps the Hero input enabled,
-        // while `ctx.sessions.list` omits its summary so the sidebar tree still hides it!
-        if (ctx.workspaces?.list && typeof ctx.workspaces.list.getSnapshot === 'function') {
-          const origWsGetSnapshot = ctx.workspaces.list.getSnapshot.bind(ctx.workspaces.list)
-          let lastRawWsSnap = undefined
-          let lastPatchedWsSnap = undefined
+        function wrapClientWorkspaces(workspacesSvc) {
+          if (!workspacesSvc || wrappedClientServices.has(workspacesSvc)) return
+          wrappedClientServices.add(workspacesSvc)
 
-          ctx.workspaces.list.getSnapshot = function incognitoPatchedWorkspaceSnapshot() {
-            const raw = origWsGetSnapshot()
-            if (!raw || !Array.isArray(raw.items)) return raw
-            if (!activeViewedSessionId) return raw
-            const st = statusBySession.get(activeViewedSessionId)
-            if (!st?.enabled || st.locked || st.destroyed || !st.workspaceId) {
-              return raw
-            }
-            if (raw === lastRawWsSnap && lastPatchedWsSnap) {
+          if (workspacesSvc.list && typeof workspacesSvc.list.getSnapshot === 'function') {
+            const origWsGetSnapshot = workspacesSvc.list.getSnapshot.bind(workspacesSvc.list)
+            let lastRawWsSnap = undefined
+            let lastPatchedWsSnap = undefined
+
+            workspacesSvc.list.getSnapshot = function incognitoPatchedWorkspaceSnapshot() {
+              const raw = origWsGetSnapshot()
+              if (!raw || !Array.isArray(raw.items)) return raw
+              if (!activeViewedSessionId) return raw
+              const st = statusBySession.get(activeViewedSessionId)
+              if (!st?.enabled || st.locked || st.destroyed || !st.workspaceId) {
+                return raw
+              }
+              if (raw === lastRawWsSnap && lastPatchedWsSnap) {
+                return lastPatchedWsSnap
+              }
+              let modified = false
+              const items = raw.items.map((ws) => {
+                if (ws.workspaceId !== st.workspaceId) return ws
+                if (Array.isArray(ws.sessionIds) && ws.sessionIds.includes(activeViewedSessionId)) {
+                  return ws
+                }
+                modified = true
+                return {
+                  ...ws,
+                  sessionIds: [activeViewedSessionId, ...(ws.sessionIds ?? [])],
+                }
+              })
+              if (!modified) return raw
+              lastRawWsSnap = raw
+              lastPatchedWsSnap = { ...raw, items }
               return lastPatchedWsSnap
             }
-            let modified = false
-            const items = raw.items.map((ws) => {
-              if (ws.workspaceId !== st.workspaceId) return ws
-              if (Array.isArray(ws.sessionIds) && ws.sessionIds.includes(activeViewedSessionId)) {
-                return ws
-              }
-              modified = true
-              return {
-                ...ws,
-                sessionIds: [activeViewedSessionId, ...(ws.sessionIds ?? [])],
-              }
-            })
-            if (!modified) return raw
-            lastRawWsSnap = raw
-            lastPatchedWsSnap = { ...raw, items }
-            return lastPatchedWsSnap
           }
         }
 
-        // Hook `ctx.sessions.prompt` so sending the first message immediately marks the client state locked
-        if (ctx.sessions && typeof ctx.sessions.prompt === 'function') {
-          const origPrompt = ctx.sessions.prompt.bind(ctx.sessions)
-          ctx.sessions.prompt = async function incognitoGuardedClientPrompt(sessionId, ...rest) {
-            const st = statusBySession.get(sessionId)
-            if (st) {
-              statusBySession.set(sessionId, { ...st, locked: true })
-              notifyClientSubscribers()
-            }
-            return origPrompt(sessionId, ...rest)
-          }
-        }
-
-        // Hook `ctx.sessions.cancel`: cancelling an incognito session destroys it and leaves
-        if (ctx.sessions && typeof ctx.sessions.cancel === 'function') {
-          const origCancel = ctx.sessions.cancel.bind(ctx.sessions)
-          ctx.sessions.cancel = async function incognitoGuardedClientCancel(sessionId, ...rest) {
-            const st = statusBySession.get(sessionId)
-            if (st?.enabled) {
-              try {
-                await origCancel(sessionId, ...rest)
-              } catch {
-                // Ignore if already destroyed by Host cancel interceptor.
-              }
-              await destroyAndLeaveIncognitoSession(sessionId, 'client-cancel')
-              return
-            }
-            return origCancel(sessionId, ...rest)
-          }
-        }
+        wrapClientSessions(getService('sessions'))
+        ctx.inject?.(['sessions'], (c) => wrapClientSessions(c.sessions))
+        wrapClientWorkspaces(getService('workspaces'))
+        ctx.inject?.(['workspaces'], (c) => wrapClientWorkspaces(c.workspaces))
 
         // Destroy active incognito session when tab is closed or refreshed
-        if (typeof window !== 'undefined') {
+        if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
           const handlePageUnload = () => {
             for (const [id, st] of statusBySession.entries()) {
               if (st.enabled && !st.destroyed) {
@@ -443,12 +467,16 @@ window.__ModuleLoader__.load({
         }
 
         // Decorate `/incognito` slash command and synchronize after command execution
-        if (ctx.commandUi && typeof ctx.commandUi.decorate === 'function') {
-          ctx.effect(() => ctx.commandUi.decorate({
-            name: 'incognito',
-            description: '开启、查询或结束无痕浏览（仅限对话开始前选择） / Toggle or end Incognito Mode',
-          }))
+        const registerCommandUiDecoration = (commandUi) => {
+          if (commandUi && typeof commandUi.decorate === 'function') {
+            ctx.effect(() => commandUi.decorate({
+              name: 'incognito',
+              description: '开启、查询或结束无痕浏览（仅限对话开始前选择） / Toggle or end Incognito Mode',
+            }))
+          }
         }
+        registerCommandUiDecoration(getService('commandUi'))
+        ctx.inject?.(['commandUi'], (c) => registerCommandUiDecoration(c.commandUi))
 
         if (typeof ctx.on === 'function') {
           ctx.on('command/executed', (payload) => {

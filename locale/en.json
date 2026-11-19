@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Incognito Mode",
+    "description": "Pre-conversation incognito sessions that leave zero trace in session logs, caches, or history plugins and permanently self-destruct when cancelled or closed."
+  }
+}

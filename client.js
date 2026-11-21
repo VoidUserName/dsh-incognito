@@ -14,7 +14,7 @@ window.__ModuleLoader__.load({
   factory(require) {
     const React = require('react')
     const h = React.createElement
-    const { useState, useEffect, useCallback } = React
+    const { useState, useEffect, useCallback, useRef, useLayoutEffect } = React
 
     const DICT_ZH = {
       toggleOff: '无痕浏览',
@@ -27,6 +27,8 @@ window.__ModuleLoader__.load({
       bannerTitle: '无痕浏览已开启',
       bannerDescPre: '发送首条消息后将锁定无痕状态。当前对话绝不进入历史、不被其他插件读取、不写入 session log；取消或离开后立即销毁且无法恢复。',
       bannerDescLocked: '当前无痕对话已锁定：内容仅保存在隔离内存中，不写入任何历史或日志；切换会话、刷新页面或点击右侧按钮将立即永久销毁。',
+      bannerHintPre: '发送首条消息后锁定 · 不进历史 · 不写日志',
+      bannerHintLocked: '仅存于内存 · 不进历史 · 离开即销毁',
       endButton: '结束并销毁',
       endButtonTitle: '立即取消并永久销毁当前无痕对话（不可恢复）',
       destroyedNotice: '无痕会话已彻底销毁且无法恢复',
@@ -43,6 +45,8 @@ window.__ModuleLoader__.load({
       bannerTitle: 'Incognito Mode Active',
       bannerDescPre: 'Locks once the first message is sent. Conversation never enters history or session logs, is unreadable by other plugins, and self-destructs on exit.',
       bannerDescLocked: 'Locked in Incognito Mode: held only in isolated memory with zero disk logs; switching sessions, refreshing, or clicking End permanently destroys it.',
+      bannerHintPre: 'Locks on first message · No history · No logs',
+      bannerHintLocked: 'Memory only · No history · Destroyed on exit',
       endButton: 'End & Destroy',
       endButtonTitle: 'Cancel and permanently destroy this incognito session (unrecoverable)',
       destroyedNotice: 'Incognito session permanently destroyed',
@@ -687,61 +691,104 @@ window.__ModuleLoader__.load({
             }
           }, [sessionId, ending])
 
-          if (!enabled && !toastMsg) return null
-          if (destroyed) return null
+          // Align the banner with the composer card so its width matches the input field.
+          const bannerRef = useRef(null)
+          const [align, setAlign] = useState(null)
+          const visible = (enabled || !!toastMsg) && !destroyed
+          useLayoutEffect(() => {
+            if (!visible) return undefined
+            const el = bannerRef.current
+            const parent = el && el.parentElement
+            if (!el || !parent) return undefined
+            const findComposer = () => {
+              let scope = parent
+              for (let i = 0; i < 6 && scope; i++, scope = scope.parentElement) {
+                const input = scope.querySelector('textarea, [contenteditable="true"]')
+                if (!input || el.contains(input)) continue
+                // Outermost rounded + bordered ancestor of the input = the composer card
+                let card = null
+                for (let n = input.parentElement; n && n !== scope; n = n.parentElement) {
+                  const cs = getComputedStyle(n)
+                  if (parseFloat(cs.borderTopLeftRadius) >= 8 && parseFloat(cs.borderTopWidth) > 0) card = n
+                }
+                return card || input.parentElement
+              }
+              return null
+            }
+            let composer = null
+            const measure = () => {
+              if (!composer || !composer.isConnected) composer = findComposer()
+              if (!composer) return setAlign(null)
+              const c = composer.getBoundingClientRect()
+              const p = parent.getBoundingClientRect()
+              if (!c.width || c.width >= p.width - 1) return setAlign(null)
+              const next = { width: Math.round(c.width), left: Math.round(c.left - p.left) }
+              setAlign((prev) => (prev && prev.width === next.width && prev.left === next.left ? prev : next))
+            }
+            measure()
+            const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null
+            if (ro) {
+              ro.observe(parent)
+              if (composer) ro.observe(composer)
+            }
+            window.addEventListener('resize', measure)
+            return () => {
+              if (ro) ro.disconnect()
+              window.removeEventListener('resize', measure)
+            }
+          }, [visible])
+
+          if (!visible) return null
+
+          const ACCENT = '#3b82f6'
+          const DANGER = '#ef4444'
+          const DANGER_SOFT = 'rgba(239, 68, 68, 0.1)'
+          const fullDesc = toastMsg ? '' : (locked ? tr('bannerDescLocked') : tr('bannerDescPre'))
+          const hint = toastMsg ? '' : (locked ? tr('bannerHintLocked') : tr('bannerHintPre'))
 
           return h(
             'div',
             {
+              ref: bannerRef,
               'data-testid': 'incognito-dock-banner',
               role: 'status',
-              style: {
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: '12px',
-                padding: '8px 12px',
-                marginBottom: '6px',
-                borderRadius: '10px',
-                border: '1px solid var(--dsw-alias-border-def, rgba(56, 189, 248, 0.35))',
-                background: 'var(--dsw-alias-bg-layer-2, rgba(15, 23, 42, 0.75))',
-                color: 'var(--dsw-alias-label-pri, #e2e8f0)',
-                fontSize: '12px',
-                lineHeight: 1.4,
-              },
-            },
-            h(
-              'div',
-              {
-                style: {
+              title: fullDesc || undefined,
+              style: Object.assign(
+                {
+                  boxSizing: 'border-box',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '8px',
-                  minWidth: 0,
-                  flex: 1,
+                  gap: '10px',
+                  height: '36px',
+                  padding: '0 5px 0 12px',
+                  marginBottom: '8px',
+                  borderRadius: '12px',
+                  border: '1px solid rgba(59, 130, 246, 0.22)',
+                  background: 'rgba(59, 130, 246, 0.06)',
+                  fontSize: '12.5px',
+                  lineHeight: '20px',
+                  whiteSpace: 'nowrap',
                 },
-              },
-              h(IncognitoIcon, { size: 16 }),
-              h(
-                'div',
-                { style: { minWidth: 0 } },
-                h(
-                  'div',
-                  { style: { fontWeight: 600, color: 'var(--dsw-alias-label-pri, #f8fafc)' } },
-                  toastMsg ? toastMsg : tr('bannerTitle'),
-                ),
-                !toastMsg
-                  && h(
-                    'div',
-                    {
-                      style: {
-                        color: 'var(--dsw-alias-label-sec, #94a3b8)',
-                        fontSize: '11.5px',
-                      },
-                    },
-                    locked ? tr('bannerDescLocked') : tr('bannerDescPre'),
-                  ),
+                align
+                  ? { width: align.width + 'px', marginLeft: align.left + 'px' }
+                  : { width: '100%', maxWidth: '960px', marginLeft: 'auto', marginRight: 'auto' },
               ),
+            },
+            h('span', { style: { display: 'inline-flex', color: ACCENT } }, h(IncognitoIcon, { size: 16 })),
+            h(
+              'span',
+              { style: { fontWeight: 600, color: ACCENT, flexShrink: 0 } },
+              toastMsg ? toastMsg : tr('bannerTitle'),
+            ),
+            hint
+              && h('span', {
+                'aria-hidden': 'true',
+                style: { width: '1px', height: '12px', background: 'currentColor', opacity: 0.2, flexShrink: 0 },
+              }),
+            h(
+              'span',
+              { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', opacity: 0.6 } },
+              hint,
             ),
             enabled
               && h(
@@ -754,14 +801,29 @@ window.__ModuleLoader__.load({
                   title: tr('endButtonTitle'),
                   style: {
                     flexShrink: 0,
-                    padding: '4px 10px',
-                    borderRadius: '6px',
-                    border: '1px solid var(--dsw-alias-border-def, rgba(248, 113, 113, 0.45))',
-                    background: 'var(--dsw-alias-bg-layer-3, rgba(239, 68, 68, 0.15))',
-                    color: 'var(--dsw-alias-label-pri, #fca5a5)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    height: '26px',
+                    padding: '0 10px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    background: DANGER_SOFT,
+                    color: DANGER,
                     fontSize: '12px',
                     fontWeight: 600,
+                    fontFamily: 'inherit',
                     cursor: ending ? 'wait' : 'pointer',
+                    opacity: ending ? 0.6 : 1,
+                    transition: 'background 0.15s, color 0.15s',
+                  },
+                  onMouseEnter: (e) => {
+                    if (ending) return
+                    e.currentTarget.style.background = DANGER
+                    e.currentTarget.style.color = '#fff'
+                  },
+                  onMouseLeave: (e) => {
+                    e.currentTarget.style.background = DANGER_SOFT
+                    e.currentTarget.style.color = DANGER
                   },
                 },
                 tr('endButton'),

@@ -1,5 +1,5 @@
 /**
- * Host implementation of the DeepSeek Harness Incognito Mode plugin (@local/dsh-incognito).
+ * Host implementation of the DeepSeek Harness Incognito Mode plugin (@voidusername/dsh-incognito).
  *
  * Enforces five strict guarantees for incognito sessions:
  * 1. Pre-conversation selection only: Incognito Mode can only be enabled while a session is blank

@@ -1,5 +1,5 @@
 {
-  "name": "@local/dsh-incognito",
+  "name": "@voidusername/dsh-incognito",
   "version": "1.0.0",
   "private": true,
   "description": "Ephemeral incognito sessions for DeepSeek Harness that never write to session logs, projection caches, workspace storage, or history query plugins, can only be enabled before a conversation starts, and permanently self-destruct on cancel or exit.",

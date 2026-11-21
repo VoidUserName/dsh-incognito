@@ -1,5 +1,5 @@
 /**
- * Web Client implementation of the DeepSeek Harness Incognito Mode plugin (@local/dsh-incognito).
+ * Web Client implementation of the DeepSeek Harness Incognito Mode plugin (@voidusername/dsh-incognito).
  *
  * Provides:
  * - Pre-conversation Incognito toggle in `conversation.input.left` (locked once conversation starts).
@@ -10,7 +10,7 @@
  *   hygiene, and automatic session destruction on session switch, cancel, or tab close/refresh.
  */
 window.__ModuleLoader__.load({
-  id: '@local/dsh-incognito',
+  id: '@voidusername/dsh-incognito',
   factory(require) {
     const React = require('react')
     const h = React.createElement

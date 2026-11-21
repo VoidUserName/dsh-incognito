@@ -7,7 +7,7 @@
 **Private, memory-only conversations for DeepSeek Harness (`dsh`).**
 Nothing is written to session logs. Nothing shows up in history. Everything is gone the moment you leave.
 
-`@local/dsh-incognito` · Host + Web Client plugin · no changes to dsh core
+`@voidusername/dsh-incognito` · Host + Web Client plugin · no changes to dsh core
 
 **English** · [简体中文](README.zh.md)
 

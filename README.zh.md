@@ -7,7 +7,7 @@
 **为 DeepSeek Harness（`dsh`）提供只存在于内存中的私密对话。**
 不写入会话日志，不出现在历史记录里，离开即彻底消失。
 
-`@local/dsh-incognito` · Host + Web Client 双端插件 · 无需修改 dsh 核心代码
+`@voidusername/dsh-incognito` · Host + Web Client 双端插件 · 无需修改 dsh 核心代码
 
 [English](README.md) · **简体中文**
 

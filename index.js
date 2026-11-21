@@ -2150,7 +2150,9 @@ export function apply(ctx) {
 
     ctx.effect(() => connectionSvc.fetch.register({
       path: '/api/incognito',
-      async handler(request) {
+      methods: ['GET', 'POST', 'DELETE'],
+      requestBody: 'buffered',
+      async fetch(request) {
         const result = await handleIncognitoHttpRequest(
           request.method,
           request.url,

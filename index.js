@@ -49,31 +49,40 @@ export class IncognitoError extends Error {
 }
 
 /**
- * Event prefixes that may be appended during blank session creation (e.g. by `permission-presets`)
- * before any user conversation has started.
+ * Event prefixes that only appear once a real conversation turn exists.
+ *
+ * This is an allowlist on purpose: a blank session already carries setup events
+ * (`permission/preset`, `sandbox/mode`, `approval/policy`, and `command/run` /
+ * `agent/inbox/spliced` from the permission picker), and new setup events may be added
+ * by other plugins. Treating every unknown event as "conversation started" locked the
+ * Incognito toggle on brand-new sessions.
  */
-const SETUP_ONLY_EVENT_PREFIXES = ['permission/']
+const CONVERSATION_EVENT_PREFIXES = ['turn/', 'step/', 'user/', 'assistant/', 'tool/', 'request/']
 
 /**
- * Determine whether an event type name represents conversation activity rather than blank-session setup.
+ * Determine whether an event represents conversation activity rather than blank-session setup.
  * @param {unknown} eventType - Session event type string.
+ * @param {any} [eventData] - Event payload, needed to classify `agent/inbox/spliced`.
  * @returns {boolean} True when the event marks the session as having started a conversation.
  */
-function isConversationEventType(eventType) {
+function isConversationEventType(eventType, eventData) {
   if (typeof eventType !== 'string' || eventType.length === 0) return false
-  for (const prefix of SETUP_ONLY_EVENT_PREFIXES) {
-    if (eventType.startsWith(prefix)) return false
+  // The user's first message is queued into the next turn before `turn/start` is appended.
+  if (eventType === 'agent/inbox/spliced') {
+    return eventData?.target === 'next-turn'
+      && Array.isArray(eventData?.inserted)
+      && eventData.inserted.length > 0
   }
-  return true
+  return CONVERSATION_EVENT_PREFIXES.some((prefix) => eventType.startsWith(prefix))
 }
 
 /**
  * Determine whether a single session event represents conversation activity.
- * @param {{ readonly type?: unknown } | undefined} event - Session event envelope.
+ * @param {{ readonly type?: unknown, readonly data?: unknown } | undefined} event - Session event envelope.
  * @returns {boolean}
  */
 function isConversationEvent(event) {
-  return isConversationEventType(event?.type)
+  return isConversationEventType(event?.type, event?.data)
 }
 
 /**
@@ -582,7 +591,7 @@ export function apply(ctx) {
         )
       }
 
-      if (incognitoSessions.has(session.id) && isConversationEventType(eventType)) {
+      if (incognitoSessions.has(session.id) && isConversationEventType(eventType, eventData)) {
         markIncognitoEngaged(session.id)
       }
 
@@ -2150,7 +2159,11 @@ export function apply(ctx) {
 
     ctx.effect(() => connectionSvc.fetch.register({
       path: '/api/incognito',
-      async handler(request) {
+      // dsh-client-connection's assertFetchRoute requires a non-empty, unique `methods` list
+      // and dispatches to `fetch` (not `handler`).
+      methods: ['GET', 'POST', 'DELETE'],
+      requestBody: 'buffered',
+      async fetch(request) {
         const result = await handleIncognitoHttpRequest(
           request.method,
           request.url,
